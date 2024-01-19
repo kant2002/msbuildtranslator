@@ -1,6 +1,7 @@
 ﻿using Microsoft.Build.Evaluation;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Locator;
+using System.Collections.Generic;
 
 var projectFile = args[0];
 MSBuildLocator.RegisterDefaults();
@@ -44,9 +45,21 @@ void Compile(string projectFile)
         }
     }
 
+    string GetValue(string value)
+    {
+        if (value.Contains("\n"))
+        {
+            return $"\"\"\"{value.Replace("\\", "\\\\")}\"\"\"";
+        }
+        else
+        {
+            return $"\"{value.Replace("\\", "\\\\")}\"";
+        }
+    }
+
     foreach (var projectProperties in tutorialProject.Properties.Where(_ => !_.IsReservedProperty && !_.IsEnvironmentProperty))
     {
-        Console.WriteLine($"var {projectProperties.Name} = \"{projectProperties.EvaluatedValue}\";");
+        Console.WriteLine($"var {projectProperties.Name} = {GetValue(projectProperties.EvaluatedValue)};");
     }
 
     Console.WriteLine();
@@ -81,16 +94,16 @@ void Compile(string projectFile)
         Console.WriteLine();
         foreach (var task in target.Tasks)
         {
-            var originalParameters = string.Join(", ", task.Parameters.Select((pair) => $"{pair.Key}: \"{pair.Value}\""));
+            var originalParameters = string.Join(", ", task.Parameters.Select((pair) => $"{pair.Key}: {GetValue(pair.Value)}"));
             var expandedParameters = string.Join(", ", task.Parameters.Select((pair) =>
             {
                 try
                 {
-                    return $"{pair.Key}: \"{tutorialProject.ExpandString(pair.Value)}\"";
+                    return $"{pair.Key}: {GetValue(tutorialProject.ExpandString(pair.Value))}";
                 }
                 catch (InvalidProjectFileException)
                 {
-                    return $"{pair.Key}: \"{pair.Value}\"";
+                    return $"{pair.Key}: {GetValue(pair.Value)}";
                 }
             }));
             if (originalParameters != expandedParameters)
