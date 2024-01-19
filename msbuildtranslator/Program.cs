@@ -108,12 +108,12 @@ void Compile(string projectFile)
             }));
             if (originalParameters != expandedParameters)
             {
-                Console.WriteLine($"\t//{task.Name}({originalParameters});");
+                Console.WriteLine($"\t/*{task.Name}({originalParameters});*/");
             }
 
             if (!string.IsNullOrWhiteSpace(task.Condition))
             {
-                Console.WriteLine($"\t// if ({task.Condition})");
+                Console.WriteLine($"\t/* if ({task.Condition})*/");
                 string evaluatedCondition;
                 try
                 {
