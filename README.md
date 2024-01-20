@@ -8,3 +8,9 @@ I hope that created file, allow for easier navigation of the inner working of .N
 ```
 dotnet run --project msbuildtranslator -- myproject.proj
 ```
+
+For saving generated code to file pass output pass as second argument:
+
+```
+dotnet run --project msbuildtranslator -- myproject.proj Generated.cs
+```
