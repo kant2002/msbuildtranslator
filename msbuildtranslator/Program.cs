@@ -1,12 +1,24 @@
 ﻿using Microsoft.Build.Evaluation;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Locator;
-using System.Collections.Generic;
 
 var projectFile = args[0];
 MSBuildLocator.RegisterDefaults();
-Compile(projectFile);
-void Compile(string projectFile)
+using var writer = CreateWriter();
+Compile(projectFile, writer);
+
+TextWriter CreateWriter()
+{
+    if (args.Length >= 2)
+    {
+        var outputFilePath = args[1];
+        return new StreamWriter(File.OpenWrite(outputFilePath));
+    }
+
+    return Console.Out;
+}
+
+void Compile(string projectFile, TextWriter textWriter)
 {
     var tutorialProject = new Project(
         projectFile,
@@ -28,7 +40,7 @@ void Compile(string projectFile)
     }
     foreach (var (targetName, target) in tutorialProject.Targets)
     {
-        Console.WriteLine($"bool {targetName}Run = false;");
+        textWriter.WriteLine($"bool {targetName}Run = false;");
         if (!string.IsNullOrWhiteSpace(target.BeforeTargets))
         {
             foreach (var dependency in tutorialProject.ExpandString(target.BeforeTargets).Split(';'))
@@ -59,39 +71,39 @@ void Compile(string projectFile)
 
     foreach (var projectProperties in tutorialProject.Properties.Where(_ => !_.IsReservedProperty && !_.IsEnvironmentProperty))
     {
-        Console.WriteLine($"var {projectProperties.Name} = {GetValue(projectProperties.EvaluatedValue)};");
+        textWriter.WriteLine($"var {projectProperties.Name} = {GetValue(projectProperties.EvaluatedValue)};");
     }
 
-    Console.WriteLine();
+    textWriter.WriteLine();
 
     foreach (var (targetName, target) in tutorialProject.Targets)
     {
-        Console.WriteLine($"void {targetName}()");
-        Console.WriteLine($"{{");
+        textWriter.WriteLine($"void {targetName}()");
+        textWriter.WriteLine($"{{");
         if (!string.IsNullOrWhiteSpace(target.Condition))
         {
-            Console.WriteLine($"\t// if ({target.Condition})");
-            Console.WriteLine($"\tif ({tutorialProject.ExpandString(target.Condition)}) {{ {targetName}Run = true; return; }}");
+            textWriter.WriteLine($"\t// if ({target.Condition})");
+            textWriter.WriteLine($"\tif ({tutorialProject.ExpandString(target.Condition)}) {{ {targetName}Run = true; return; }}");
         }
         if (!string.IsNullOrWhiteSpace(target.DependsOnTargets))
         {
-            Console.WriteLine($"\t// DependsOnTargets;");
+            textWriter.WriteLine($"\t// DependsOnTargets;");
             foreach (var d in tutorialProject.ExpandString(target.DependsOnTargets).Split(';'))
             {
-                Console.WriteLine($"\tif (!{d.Trim()}Run) {d.Trim()}();");
+                textWriter.WriteLine($"\tif (!{d.Trim()}Run) {d.Trim()}();");
             }
         }
 
         if (beforeTargets.TryGetValue(targetName, out var beforeDependencies))
         {
-            Console.WriteLine($"\t// BeforeTargets;");
+            textWriter.WriteLine($"\t// BeforeTargets;");
             foreach (var d in beforeDependencies)
             {
-                Console.WriteLine($"\tif (!{d}Run) {d}();");
+                textWriter.WriteLine($"\tif (!{d}Run) {d}();");
             }
         }
 
-        Console.WriteLine();
+        textWriter.WriteLine();
         foreach (var task in target.Tasks)
         {
             var originalParameters = string.Join(", ", task.Parameters.Select((pair) => $"{pair.Key}: {GetValue(pair.Value)}"));
@@ -108,12 +120,12 @@ void Compile(string projectFile)
             }));
             if (originalParameters != expandedParameters)
             {
-                Console.WriteLine($"\t/*{task.Name}({originalParameters});*/");
+                textWriter.WriteLine($"\t/*{task.Name}({originalParameters});*/");
             }
 
             if (!string.IsNullOrWhiteSpace(task.Condition))
             {
-                Console.WriteLine($"\t/* if ({task.Condition})*/");
+                textWriter.WriteLine($"\t/* if ({task.Condition})*/");
                 string evaluatedCondition;
                 try
                 {
@@ -123,36 +135,35 @@ void Compile(string projectFile)
                 {
                     evaluatedCondition = task.Condition;
                 }
-                Console.WriteLine($"\tif ({evaluatedCondition})");
-                Console.WriteLine($"\t{{");
-                Console.WriteLine($"\t\t{task.Name}({expandedParameters});");
-                Console.WriteLine($"\t}}");
+                textWriter.WriteLine($"\tif ({evaluatedCondition})");
+                textWriter.WriteLine($"\t{{");
+                textWriter.WriteLine($"\t\t{task.Name}({expandedParameters});");
+                textWriter.WriteLine($"\t}}");
             }
             else
             {
-                Console.WriteLine($"\t{task.Name}({expandedParameters});");
+                textWriter.WriteLine($"\t{task.Name}({expandedParameters});");
             }
         }
 
         if (target.Tasks.Count > 0)
         {
-            Console.WriteLine();
+            textWriter.WriteLine();
         }
 
         if (afterTargets.TryGetValue(targetName, out var afterDependencies))
         {
-            Console.WriteLine($"\t// AfterTargets;");
+            textWriter.WriteLine($"\t// AfterTargets;");
             foreach (var d in afterDependencies)
             {
-                Console.WriteLine($"\tif (!{d}Run) {d}();");
+                textWriter.WriteLine($"\tif (!{d}Run) {d}();");
             }
         }
-        Console.WriteLine($"\t{targetName}Run = true;");
-        Console.WriteLine($"}}");
-        Console.WriteLine();
+        textWriter.WriteLine($"\t{targetName}Run = true;");
+        textWriter.WriteLine($"}}");
+        textWriter.WriteLine();
     }
 
     var defaultTarget = tutorialProject.Properties.Single(_ => _.Name == "MSBuildProjectDefaultTargets");
-    Console.WriteLine($"{defaultTarget.EvaluatedValue}();");
+    textWriter.WriteLine($"{defaultTarget.EvaluatedValue}();");
 }
-
