@@ -2,6 +2,7 @@
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Locator;
+using Microsoft.Win32;
 using System.CodeDom.Compiler;
 using System.IO;
 using System.Threading.Tasks;
@@ -136,7 +137,8 @@ void Compile(string projectFile, IndentedTextWriter textWriter)
                         {
                             WriteConditioned(property.Condition, () =>
                             {
-                                textWriter.WriteLine($"{property.Name} = {GetValue(property.Value)};");
+                                textWriter.WriteLine($"/*{property.Name} = {GetValue(property.Value)};*/");
+                                textWriter.WriteLine($"{property.Name} = {GetValue(ExpandString(property.Value))};");
                             });
                         }
                     });
@@ -144,17 +146,12 @@ void Compile(string projectFile, IndentedTextWriter textWriter)
             }
             foreach (var task in target.Tasks)
             {
-                var originalParameters = string.Join(", ", task.Parameters.Select((pair) => $"{pair.Key}: {GetValue(pair.Value)}"));
-                var expandedParameters = string.Join(", ", task.Parameters.Select((pair) =>
+                // Pass parameters in the alphabet order.
+                // otherwise generated code would be not diffable.
+                var originalParameters = string.Join(", ", task.Parameters.OrderBy(_ => _.Key).Select((pair) => $"{pair.Key}: {GetValue(pair.Value)}"));
+                var expandedParameters = string.Join(", ", task.Parameters.OrderBy(_ => _.Key).Select((pair) =>
                 {
-                    try
-                    {
-                        return $"{pair.Key}: {GetValue(tutorialProject.ExpandString(pair.Value))}";
-                    }
-                    catch (InvalidProjectFileException)
-                    {
-                        return $"{pair.Key}: {GetValue(pair.Value)}";
-                    }
+                    return $"{pair.Key}: {GetValue(ExpandString(pair.Value))}";
                 }));
                 if (originalParameters != expandedParameters)
                 {
@@ -186,6 +183,17 @@ void Compile(string projectFile, IndentedTextWriter textWriter)
 
     var defaultTarget = tutorialProject.Properties.Single(_ => _.Name == "MSBuildProjectDefaultTargets");
     textWriter.WriteLine($"{defaultTarget.EvaluatedValue}();");
+    string ExpandString(string value)
+    {
+        try
+        {
+            return tutorialProject.ExpandString(value);
+        }
+        catch
+        {
+            return value;
+        }
+    }
 
     void WriteConditioned(string condition, Action action)
     {
