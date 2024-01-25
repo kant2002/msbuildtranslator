@@ -14,3 +14,6 @@ For saving generated code to file pass output pass as second argument:
 ```
 dotnet run --project msbuildtranslator -- myproject.proj Generated.cs
 ```
+
+Sample of output can be found here.
+https://github.com/kant2002/MSBuildScript-sample
