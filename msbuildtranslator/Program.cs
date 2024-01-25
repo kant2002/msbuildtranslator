@@ -1,10 +1,14 @@
 ﻿using Microsoft.Build.Evaluation;
 using Microsoft.Build.Exceptions;
+using Microsoft.Build.Execution;
 using Microsoft.Build.Locator;
+using System.CodeDom.Compiler;
+using System.IO;
+using System.Threading.Tasks;
 
 var projectFile = args[0];
 MSBuildLocator.RegisterDefaults();
-using var writer = CreateWriter();
+using var writer = new IndentedTextWriter(CreateWriter());
 Compile(projectFile, writer);
 
 TextWriter CreateWriter()
@@ -18,7 +22,7 @@ TextWriter CreateWriter()
     return Console.Out;
 }
 
-void Compile(string projectFile, TextWriter textWriter)
+void Compile(string projectFile, IndentedTextWriter textWriter)
 {
     var tutorialProject = new Project(
         projectFile,
@@ -76,94 +80,156 @@ void Compile(string projectFile, TextWriter textWriter)
 
     textWriter.WriteLine();
 
+    foreach (var projectItemDefinition in tutorialProject.ItemDefinitions.Values)
+    {
+        textWriter.WriteLine($"class {projectItemDefinition.ItemType}");
+        textWriter.WriteLine($"{{");
+        using (var _ = new IndentationScope(textWriter))
+        {
+            foreach (var metadata in projectItemDefinition.Metadata)
+            {
+                textWriter.WriteLine($"public string {metadata.Name} {{ get; set; }} = \"{metadata.EvaluatedValue}");
+            }
+        }
+
+        textWriter.WriteLine($"}}");
+        textWriter.WriteLine();
+    }
+
     foreach (var (targetName, target) in tutorialProject.Targets)
     {
         textWriter.WriteLine($"void {targetName}()");
         textWriter.WriteLine($"{{");
-        if (!string.IsNullOrWhiteSpace(target.Condition))
+        using (var _ = new IndentationScope(textWriter))
         {
-            textWriter.WriteLine($"\t// if ({target.Condition})");
-            textWriter.WriteLine($"\tif ({tutorialProject.ExpandString(target.Condition)}) {{ {targetName}Run = true; return; }}");
-        }
-        if (!string.IsNullOrWhiteSpace(target.DependsOnTargets))
-        {
-            textWriter.WriteLine($"\t// DependsOnTargets;");
-            foreach (var d in tutorialProject.ExpandString(target.DependsOnTargets).Split(';'))
+            if (!string.IsNullOrWhiteSpace(target.Condition))
             {
-                textWriter.WriteLine($"\tif (!{d.Trim()}Run) {d.Trim()}();");
+                textWriter.WriteLine($"// if ({target.Condition})");
+                textWriter.WriteLine($"if ({tutorialProject.ExpandString(target.Condition)}) {{ {targetName}Run = true; return; }}");
             }
-        }
-
-        if (beforeTargets.TryGetValue(targetName, out var beforeDependencies))
-        {
-            textWriter.WriteLine($"\t// BeforeTargets;");
-            foreach (var d in beforeDependencies)
+            if (!string.IsNullOrWhiteSpace(target.DependsOnTargets))
             {
-                textWriter.WriteLine($"\tif (!{d}Run) {d}();");
-            }
-        }
-
-        textWriter.WriteLine();
-        foreach (var task in target.Tasks)
-        {
-            var originalParameters = string.Join(", ", task.Parameters.Select((pair) => $"{pair.Key}: {GetValue(pair.Value)}"));
-            var expandedParameters = string.Join(", ", task.Parameters.Select((pair) =>
-            {
-                try
+                textWriter.WriteLine($"// DependsOnTargets;");
+                foreach (var d in tutorialProject.ExpandString(target.DependsOnTargets).Split(';'))
                 {
-                    return $"{pair.Key}: {GetValue(tutorialProject.ExpandString(pair.Value))}";
+                    textWriter.WriteLine($"if (!{d.Trim()}Run) {d.Trim()}();");
                 }
-                catch (InvalidProjectFileException)
-                {
-                    return $"{pair.Key}: {GetValue(pair.Value)}";
-                }
-            }));
-            if (originalParameters != expandedParameters)
-            {
-                textWriter.WriteLine($"\t/*{task.Name}({originalParameters});*/");
             }
 
-            if (!string.IsNullOrWhiteSpace(task.Condition))
+            if (beforeTargets.TryGetValue(targetName, out var beforeDependencies))
             {
-                textWriter.WriteLine($"\t/* if ({task.Condition})*/");
-                string evaluatedCondition;
-                try
+                textWriter.WriteLine($"// BeforeTargets;");
+                foreach (var d in beforeDependencies)
                 {
-                    evaluatedCondition = tutorialProject.ExpandString(task.Condition);
+                    textWriter.WriteLine($"if (!{d}Run) {d}();");
                 }
-                catch
-                {
-                    evaluatedCondition = task.Condition;
-                }
-                textWriter.WriteLine($"\tif ({evaluatedCondition})");
-                textWriter.WriteLine($"\t{{");
-                textWriter.WriteLine($"\t\t{task.Name}({expandedParameters});");
-                textWriter.WriteLine($"\t}}");
             }
-            else
-            {
-                textWriter.WriteLine($"\t{task.Name}({expandedParameters});");
-            }
-        }
 
-        if (target.Tasks.Count > 0)
-        {
             textWriter.WriteLine();
+            foreach (var child in target.Children)
+            {
+                if (child is ProjectPropertyGroupTaskInstance propertyGroup)
+                {
+                    WriteConditioned(propertyGroup.Condition, () =>
+                    {
+                        foreach (var property in propertyGroup.Properties)
+                        {
+                            WriteConditioned(property.Condition, () =>
+                            {
+                                textWriter.WriteLine($"{property.Name} = {GetValue(property.Value)};");
+                            });
+                        }
+                    });
+                }
+            }
+            foreach (var task in target.Tasks)
+            {
+                var originalParameters = string.Join(", ", task.Parameters.Select((pair) => $"{pair.Key}: {GetValue(pair.Value)}"));
+                var expandedParameters = string.Join(", ", task.Parameters.Select((pair) =>
+                {
+                    try
+                    {
+                        return $"{pair.Key}: {GetValue(tutorialProject.ExpandString(pair.Value))}";
+                    }
+                    catch (InvalidProjectFileException)
+                    {
+                        return $"{pair.Key}: {GetValue(pair.Value)}";
+                    }
+                }));
+                if (originalParameters != expandedParameters)
+                {
+                    textWriter.WriteLine($"/*{task.Name}({originalParameters});*/");
+                }
+
+                WriteConditioned(task.Condition, () => textWriter.WriteLine($"{task.Name}({expandedParameters});"));
+            }
+
+            if (target.Tasks.Count > 0)
+            {
+                textWriter.WriteLine();
+            }
+
+            if (afterTargets.TryGetValue(targetName, out var afterDependencies))
+            {
+                textWriter.WriteLine($"// AfterTargets;");
+                foreach (var d in afterDependencies)
+                {
+                    textWriter.WriteLine($"if (!{d}Run) {d}();");
+                }
+            }
+            textWriter.WriteLine($"{targetName}Run = true;");
         }
 
-        if (afterTargets.TryGetValue(targetName, out var afterDependencies))
-        {
-            textWriter.WriteLine($"\t// AfterTargets;");
-            foreach (var d in afterDependencies)
-            {
-                textWriter.WriteLine($"\tif (!{d}Run) {d}();");
-            }
-        }
-        textWriter.WriteLine($"\t{targetName}Run = true;");
         textWriter.WriteLine($"}}");
         textWriter.WriteLine();
     }
 
     var defaultTarget = tutorialProject.Properties.Single(_ => _.Name == "MSBuildProjectDefaultTargets");
     textWriter.WriteLine($"{defaultTarget.EvaluatedValue}();");
+
+    void WriteConditioned(string condition, Action action)
+    {
+        if (!string.IsNullOrWhiteSpace(condition))
+        {
+            textWriter.WriteLine($"/* if ({condition})*/");
+            string evaluatedCondition;
+            try
+            {
+                evaluatedCondition = tutorialProject.ExpandString(condition);
+            }
+            catch
+            {
+                evaluatedCondition = condition;
+            }
+            textWriter.WriteLine($"if ({evaluatedCondition})");
+            textWriter.WriteLine($"{{");
+            using (var _ = new IndentationScope(textWriter))
+            {
+                action();
+            }
+
+            textWriter.WriteLine($"}}");
+        }
+        else
+        {
+            action();
+        }
+    }
+}
+
+
+class IndentationScope : IDisposable
+{
+    private readonly IndentedTextWriter textWriter;
+
+    public IndentationScope(IndentedTextWriter textWriter)
+    {
+        this.textWriter = textWriter;
+        this.textWriter.Indent++;
+    }
+
+    public void Dispose()
+    {
+        this.textWriter.Indent--;
+    }
 }
