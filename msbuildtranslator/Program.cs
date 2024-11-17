@@ -223,6 +223,8 @@ void Compile(string projectFile, IndentedTextWriter textWriter)
             action();
         }
     }
+
+    textWriter.Flush();
 }
 
 
